@@ -48,12 +48,14 @@ from app.routes import user as user_router
 from app.routes import templates as templates_router
 from app.routes import generated_docs as generated_docs_router
 from app.routes.trello_webhook import router as trello_webhook_router
+from app.routers.jira_routes import router as jira_router
 
 app.include_router(auth_router.router, prefix="/auth")
 app.include_router(user_router.router, prefix="/api")
 app.include_router(templates_router.router, prefix="/templates")
 app.include_router(generated_docs_router.router, prefix="/generated-docs")
 app.include_router(trello_webhook_router)  # ✅ ONLY webhook registration
+app.include_router(jira_router, prefix="/jira")
 
 # ------------------ Services ------------------
 from app.services.trello_service import (
