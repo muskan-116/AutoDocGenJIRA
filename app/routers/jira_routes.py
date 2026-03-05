@@ -14,7 +14,7 @@ from app.services.jira_service import (
 )
 from app.services.workflow_service import execute_workflow
 from app.db import get_db
-from app.auth_middleware import get_current_user
+from app.middleware.auth_middleware import get_current_user
 
 router = APIRouter(tags=["Jira"])
 
