@@ -3,7 +3,6 @@ from fastapi.responses import RedirectResponse
 from urllib.parse import urlencode
 import uuid
 import os
-import redis.asyncio as aioredis
 
 from app.services.jira_service import (
     exchange_code_for_token,
