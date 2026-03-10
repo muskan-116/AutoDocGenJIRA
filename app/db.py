@@ -1,12 +1,13 @@
 # app/db.py
-from fastapi import Request
+from motor.motor_asyncio import AsyncIOMotorClient
+import os
 
-# ✅ db.py sirf dependency provide karta hai
-# MongoDB connection main.py ke startup mein hota hai — ek jagah, ek baar
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://hadiamoosa40_db_user:op6v4ma4mlzA75wF@users.cy4zf7c.mongodb.net/Doc_Gen?retryWrites=true&w=majority")
+DB_NAME = os.getenv("DB_NAME", "Doc_Gen")
 
-async def get_db(request: Request):
-    """
-    FastAPI dependency — app.state.db return karta hai
-    Jo main.py startup mein set hota hai
-    """
-    return request.app.state.db
+client = AsyncIOMotorClient(MONGO_URI)
+db = client[DB_NAME]
+
+# Dependency for FastAPI
+async def get_db():
+    return db
