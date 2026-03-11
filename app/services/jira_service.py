@@ -1,7 +1,6 @@
 import os
-import httpx
-from datetime import datetime, timedelta
-from urllib.parse import quote
+import requests
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -13,19 +12,13 @@ JIRA_REDIRECT_URI = os.getenv("JIRA_REDIRECT_URI")
 
 # ================= TOKEN STORAGE =================
 async def save_jira_token(db, user_id: str, token_data: dict):
-    """Save or update Jira OAuth tokens in MongoDB"""
-    expires_in = token_data.get("expires_in", 3600)
-    expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
-
     await db["jira_tokens"].update_one(
-        {"user_id": str(user_id)},  # ✅ Always string — no int/str mismatch
+        {"user_id": user_id},
         {
             "$set": {
                 "access_token": token_data.get("access_token"),
                 "refresh_token": token_data.get("refresh_token"),
-                "expires_in": expires_in,
-                "expires_at": expires_at,  # ✅ Store expiry time
-                "cloud_id": None,           # ✅ Reset cloud_id on new token
+                "expires_in": token_data.get("expires_in"),
                 "updated_at": datetime.utcnow()
             }
         },
@@ -33,8 +26,7 @@ async def save_jira_token(db, user_id: str, token_data: dict):
     )
 
 # ================= TOKEN EXCHANGE =================
-async def exchange_code_for_token(code: str) -> dict:
-    """Exchange OAuth code for access + refresh tokens"""
+def exchange_code_for_token(code: str):
     url = "https://auth.atlassian.com/oauth/token"
 
     payload = {
@@ -45,100 +37,39 @@ async def exchange_code_for_token(code: str) -> dict:
         "redirect_uri": JIRA_REDIRECT_URI
     }
 
-    async with httpx.AsyncClient() as client:  # ✅ Async — no blocking
-        res = await client.post(url, json=payload)
-
-    if res.status_code != 200:
-        raise Exception(f"Token exchange failed: {res.status_code} — {res.text}")
-
+    res = requests.post(url, json=payload)
+    res.raise_for_status()
     return res.json()
 
-# ================= TOKEN REFRESH =================
-async def refresh_access_token(db, user_id: str) -> str:
-    """Refresh expired access token using refresh_token"""
-    token = await db["jira_tokens"].find_one({"user_id": str(user_id)})
-
-    if not token or not token.get("refresh_token"):
-        raise Exception("Jira not connected or refresh token missing. Please re-authenticate.")
-
-    url = "https://auth.atlassian.com/oauth/token"
-    payload = {
-        "grant_type": "refresh_token",
-        "client_id": JIRA_CLIENT_ID,
-        "client_secret": JIRA_CLIENT_SECRET,
-        "refresh_token": token["refresh_token"]
-    }
-
-    async with httpx.AsyncClient() as client:
-        res = await client.post(url, json=payload)
-
-    if res.status_code != 200:
-        raise Exception(f"Token refresh failed: {res.status_code} — {res.text}")
-
-    new_token_data = res.json()
-    await save_jira_token(db, user_id, new_token_data)
-    return new_token_data["access_token"]
-
-# ================= ACCESS TOKEN (with auto-refresh) =================
-async def get_access_token(db, user_id: str) -> str:
-    """Get valid access token — auto refresh if expired"""
-    token = await db["jira_tokens"].find_one({"user_id": str(user_id)})
-
-    if not token:
-        raise Exception("Jira not connected. Please authenticate first.")
-
-    # ✅ Check expiry — refresh 5 minutes before expiry
-    expires_at = token.get("expires_at")
-    if expires_at and datetime.utcnow() >= (expires_at - timedelta(minutes=5)):
-        return await refresh_access_token(db, user_id)
-
-    return token["access_token"]
-
-# ================= CLOUD ID (cached in DB) =================
-async def get_cloud_id(db, user_id: str, access_token: str) -> str:
-    """Get Jira Cloud ID — fetch once and cache in DB"""
-
-    # ✅ Check cache first — avoid repeated API calls
-    token_doc = await db["jira_tokens"].find_one({"user_id": str(user_id)})
-    if token_doc and token_doc.get("cloud_id"):
-        return token_doc["cloud_id"]
-
-    async with httpx.AsyncClient() as client:
-        res = await client.get(
-            "https://api.atlassian.com/oauth/token/accessible-resources",
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Accept": "application/json"
-            }
-        )
-
-    if res.status_code != 200:
-        raise Exception(f"Failed to fetch Jira sites: {res.status_code} — {res.text}")
+# ================= CLOUD ID =================
+def get_cloud_id(access_token: str) -> str:
+    res = requests.get(
+        "https://api.atlassian.com/oauth/token/accessible-resources",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json"
+        }
+    )
+    res.raise_for_status()
 
     resources = res.json()
     if not resources:
-        raise Exception("No Jira sites found. Please create a Jira site at atlassian.com")
+        raise Exception("No Jira sites found")
 
-    cloud_id = resources[0]["id"]
+    return resources[0]["id"]
 
-    # ✅ Cache cloud_id in DB
-    await db["jira_tokens"].update_one(
-        {"user_id": str(user_id)},
-        {"$set": {"cloud_id": cloud_id}}
-    )
+# ================= ACCESS TOKEN =================
+async def get_access_token(db, user_id: str) -> str:
+    token = await db["jira_tokens"].find_one({"user_id": user_id})
+    if not token:
+        raise Exception("Jira not connected")
 
-    return cloud_id
+    return token["access_token"]
 
 # ================= CORE REQUEST =================
-async def jira_request(db, user_id: str, method: str, endpoint: str) -> dict:
-    """
-    Central async Jira API request handler
-    - Auto token refresh
-    - Cached cloud_id
-    - Proper error messages
-    """
+async def jira_request(db, user_id: str, method: str, endpoint: str):
     access_token = await get_access_token(db, user_id)
-    cloud_id = await get_cloud_id(db, user_id, access_token)
+    cloud_id = get_cloud_id(access_token)
 
     url = f"{JIRA_BASE_URL}/ex/jira/{cloud_id}{endpoint}"
 
@@ -148,60 +79,41 @@ async def jira_request(db, user_id: str, method: str, endpoint: str) -> dict:
         "Content-Type": "application/json"
     }
 
-    async with httpx.AsyncClient(timeout=30.0) as client:  # ✅ Timeout added
-        res = await client.request(method, url, headers=headers)
-
-    if res.status_code == 401:
-        # ✅ Token expired mid-session — force refresh and retry once
-        access_token = await refresh_access_token(db, user_id)
-        headers["Authorization"] = f"Bearer {access_token}"
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            res = await client.request(method, url, headers=headers)
-
-    if res.status_code == 403:
-        raise Exception("Jira permission denied. Check your OAuth scopes in Atlassian Developer Console.")
-
-    if res.status_code == 404:
-        raise Exception(f"Jira resource not found: {endpoint}")
-
-    if not res.is_success:
-        raise Exception(f"Jira API error {res.status_code}: {res.text}")
-
+    res = requests.request(method, url, headers=headers)
+    res.raise_for_status()
     return res.json()
 
 # ================= PROJECTS =================
-async def get_projects(db, user_id: str) -> list:
-    """Fetch all Jira projects for the authenticated user"""
-    data = await jira_request(db, user_id, "GET", "/rest/api/3/project/search")
+async def get_projects(db, user_id: str):
+    data = await jira_request(
+        db,
+        user_id,
+        "GET",
+        "/rest/api/3/project/search"
+    )
+
+    # IMPORTANT: return only projects list
     return data.get("values", [])
 
 # ================= PROJECT ISSUES =================
-async def get_project_issues(db, user_id: str, project_key: str) -> dict:
-    """Fetch all issues for a given Jira project (max 100)"""
-    jql = quote(f"project={project_key} ORDER BY created DESC")  # ✅ URL encoded
-    endpoint = f"/rest/api/3/search?jql={jql}&maxResults=100&fields=summary,description,status,issuetype,assignee,priority"
+async def get_project_issues(db, user_id: str, project_key: str):
+    jql = f"project={project_key}"
+    endpoint = f"/rest/api/3/search?jql={jql}&maxResults=100"
     return await jira_request(db, user_id, "GET", endpoint)
 
 # ================= STRUCTURE FOR DOCS =================
-def structure_jira_data(jira_data: dict) -> dict:
-    """
-    Organize raw Jira issues into Epics / Stories / Tasks
-    for document generation
-    """
+def structure_jira_data(jira_data: dict):
     epics, stories, tasks = [], [], []
 
     for issue in jira_data.get("issues", []):
-        fields = issue.get("fields", {})
-        issue_type = fields.get("issuetype", {}).get("name", "Task")
+        fields = issue["fields"]
+        issue_type = fields["issuetype"]["name"]
 
-        # ✅ Safe extraction with fallbacks
         item = {
-            "key": issue.get("key", ""),
-            "title": fields.get("summary", "No Title"),
-            "description": _extract_description(fields.get("description")),
-            "status": fields.get("status", {}).get("name", "Unknown"),
-            "assignee": fields.get("assignee", {}).get("displayName", "Unassigned") if fields.get("assignee") else "Unassigned",
-            "priority": fields.get("priority", {}).get("name", "Medium") if fields.get("priority") else "Medium"
+            "key": issue["key"],
+            "title": fields["summary"],
+            "description": fields.get("description"),
+            "status": fields["status"]["name"]
         }
 
         if issue_type == "Epic":
@@ -214,40 +126,5 @@ def structure_jira_data(jira_data: dict) -> dict:
     return {
         "epics": epics,
         "stories": stories,
-        "tasks": tasks,
-        "summary": {
-            "total": len(epics) + len(stories) + len(tasks),
-            "epics_count": len(epics),
-            "stories_count": len(stories),
-            "tasks_count": len(tasks)
-        }
+        "tasks": tasks
     }
-
-# ================= HELPER =================
-def _extract_description(description) -> str:
-    """
-    Jira API v3 returns description in Atlassian Document Format (ADF)
-    This extracts plain text from it
-    """
-    if not description:
-        return ""
-
-    # If it's already a string
-    if isinstance(description, str):
-        return description
-
-    # ADF format — extract text nodes
-    if isinstance(description, dict):
-        texts = []
-        _extract_adf_text(description, texts)
-        return " ".join(texts).strip()
-
-    return ""
-
-def _extract_adf_text(node: dict, texts: list):
-    """Recursively extract text from ADF (Atlassian Document Format)"""
-    if node.get("type") == "text":
-        texts.append(node.get("text", ""))
-
-    for child in node.get("content", []):
-        _extract_adf_text(child, texts)
