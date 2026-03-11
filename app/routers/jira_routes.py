@@ -28,12 +28,11 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 # ---------- 1️⃣ AUTHORIZE ----------
 @router.get("/authorize")
 async def authorize(
-    user_id: str,          # ✅ query param se lo — browser redirect pe JWT header nahi jata
+    user_id: str,
     db=Depends(get_db)
 ):
     state = f"{user_id}_{uuid.uuid4().hex}"
 
-    # ✅ MongoDB mein state store karo
     await db["oauth_states"].insert_one({
         "state": state,
         "user_id": str(user_id),
@@ -62,7 +61,6 @@ async def callback(
     state: str,
     db=Depends(get_db)
 ):
-    # ✅ MongoDB se state fetch
     state_doc = await db["oauth_states"].find_one({"state": state})
 
     if not state_doc:
@@ -71,7 +69,6 @@ async def callback(
             detail="Invalid or expired OAuth state. Please try connecting Jira again."
         )
 
-    # ✅ Expiry check
     if datetime.utcnow() > state_doc["expires_at"]:
         await db["oauth_states"].delete_one({"state": state})
         raise HTTPException(
@@ -79,12 +76,10 @@ async def callback(
             detail="OAuth state expired. Please try connecting Jira again."
         )
 
-    # ✅ One-time use — foran delete
     await db["oauth_states"].delete_one({"state": state})
 
     user_id = state_doc["user_id"]
 
-    # ✅ Token exchange (async)
     token_data = await exchange_code_for_token(code)
 
     if not token_data or not token_data.get("access_token"):
@@ -95,7 +90,8 @@ async def callback(
 
     await save_jira_token(db, user_id, token_data)
 
-    return RedirectResponse(f"{FRONTEND_URL}/jira-success")
+    # ✅ Seedha integrations page pe redirect — no extra page needed
+    return RedirectResponse(f"{FRONTEND_URL}/integrations")
 
 
 # ---------- 3️⃣ CONNECTION STATUS ----------
@@ -121,7 +117,23 @@ async def fetch_projects(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# ---------- 5️⃣ DISCONNECT ----------
+# ---------- 5️⃣ FETCH ISSUES — JiraDashboard ke liye ----------
+@router.get("/issues/{project_key}")
+async def fetch_issues(
+    project_key: str,
+    user=Depends(get_current_user),
+    db=Depends(get_db)
+):
+    """Fetch and structure issues for a specific project"""
+    try:
+        jira_raw = await get_project_issues(db, user["id"], project_key)
+        jira_structured = structure_jira_data(jira_raw)
+        return {"issues": jira_structured}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ---------- 6️⃣ DISCONNECT ----------
 @router.delete("/disconnect")
 async def disconnect_jira(
     user=Depends(get_current_user),
@@ -131,7 +143,7 @@ async def disconnect_jira(
     return {"message": "Jira disconnected successfully"}
 
 
-# ---------- 6️⃣ GENERATE DOCUMENT ----------
+# ---------- 7️⃣ GENERATE DOCUMENT ----------
 @router.post("/generate-document")
 async def generate_document(
     project_key: str,
