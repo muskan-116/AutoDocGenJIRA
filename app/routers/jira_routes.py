@@ -25,7 +25,7 @@ JIRA_REDIRECT_URI = os.getenv("JIRA_REDIRECT_URI")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 
-# ---------- 1️⃣ AUTHORIZE ----------
+# ---------- 1 AUTHORIZE ----------
 @router.get("/authorize")
 async def authorize(
     user_id: str,
@@ -54,7 +54,7 @@ async def authorize(
     return RedirectResponse(jira_auth_url)
 
 
-# ---------- 2️⃣ CALLBACK ----------
+# ---------- 2 CALLBACK ----------
 @router.get("/callback")
 async def callback(
     code: str,
@@ -90,11 +90,10 @@ async def callback(
 
     await save_jira_token(db, user_id, token_data)
 
-    # ✅ Seedha integrations page pe redirect — no extra page needed
     return RedirectResponse(f"{FRONTEND_URL}/integrations")
 
 
-# ---------- 3️⃣ CONNECTION STATUS ----------
+# ---------- 3 CONNECTION STATUS ----------
 @router.get("/status")
 async def jira_status(
     user=Depends(get_current_user),
@@ -104,7 +103,7 @@ async def jira_status(
     return {"connected": bool(token and token.get("access_token"))}
 
 
-# ---------- 4️⃣ FETCH PROJECTS ----------
+# ---------- 4 FETCH PROJECTS ----------
 @router.get("/projects")
 async def fetch_projects(
     user=Depends(get_current_user),
@@ -117,14 +116,13 @@ async def fetch_projects(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# ---------- 5️⃣ FETCH ISSUES — JiraDashboard ke liye ----------
+# ---------- 5 FETCH ISSUES ----------
 @router.get("/issues/{project_key}")
 async def fetch_issues(
     project_key: str,
     user=Depends(get_current_user),
     db=Depends(get_db)
 ):
-    """Fetch and structure issues for a specific project"""
     try:
         jira_raw = await get_project_issues(db, user["id"], project_key)
         jira_structured = structure_jira_data(jira_raw)
@@ -133,7 +131,7 @@ async def fetch_issues(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# ---------- 6️⃣ DISCONNECT ----------
+# ---------- 6 DISCONNECT ----------
 @router.delete("/disconnect")
 async def disconnect_jira(
     user=Depends(get_current_user),
@@ -143,7 +141,7 @@ async def disconnect_jira(
     return {"message": "Jira disconnected successfully"}
 
 
-# ---------- 7️⃣ GENERATE DOCUMENT ----------
+# ---------- 7 GENERATE DOCUMENT ----------
 @router.post("/generate-document")
 async def generate_document(
     project_key: str,
