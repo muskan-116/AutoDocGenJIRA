@@ -14,7 +14,7 @@ from app.services.jira_service import (
     structure_jira_data,
     get_projects
 )
-from app.services.workflow_service import execute_workflow
+from app.services.jira_workflow_service import execute_jira_workflow
 from app.db import get_db
 from app.middleware.auth_middleware import get_current_user
 
@@ -25,7 +25,7 @@ JIRA_REDIRECT_URI = os.getenv("JIRA_REDIRECT_URI")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 
-# ---------- 1 AUTHORIZE ----------
+# ---------- 1️⃣ AUTHORIZE ----------
 @router.get("/authorize")
 async def authorize(
     user_id: str,
@@ -54,7 +54,7 @@ async def authorize(
     return RedirectResponse(jira_auth_url)
 
 
-# ---------- 2 CALLBACK ----------
+# ---------- 2️⃣ CALLBACK ----------
 @router.get("/callback")
 async def callback(
     code: str,
@@ -90,10 +90,11 @@ async def callback(
 
     await save_jira_token(db, user_id, token_data)
 
+    # ✅ Seedha integrations page pe redirect — no extra page needed
     return RedirectResponse(f"{FRONTEND_URL}/integrations")
 
 
-# ---------- 3 CONNECTION STATUS ----------
+# ---------- 3️⃣ CONNECTION STATUS ----------
 @router.get("/status")
 async def jira_status(
     user=Depends(get_current_user),
@@ -103,7 +104,7 @@ async def jira_status(
     return {"connected": bool(token and token.get("access_token"))}
 
 
-# ---------- 4 FETCH PROJECTS ----------
+# ---------- 4️⃣ FETCH PROJECTS ----------
 @router.get("/projects")
 async def fetch_projects(
     user=Depends(get_current_user),
@@ -116,13 +117,14 @@ async def fetch_projects(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# ---------- 5 FETCH ISSUES ----------
+# ---------- 5️⃣ FETCH ISSUES — JiraDashboard ke liye ----------
 @router.get("/issues/{project_key}")
 async def fetch_issues(
     project_key: str,
     user=Depends(get_current_user),
     db=Depends(get_db)
 ):
+    """Fetch and structure issues for a specific project"""
     try:
         jira_raw = await get_project_issues(db, user["id"], project_key)
         jira_structured = structure_jira_data(jira_raw)
@@ -131,7 +133,7 @@ async def fetch_issues(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# ---------- 6 DISCONNECT ----------
+# ---------- 6️⃣ DISCONNECT ----------
 @router.delete("/disconnect")
 async def disconnect_jira(
     user=Depends(get_current_user),
@@ -141,7 +143,7 @@ async def disconnect_jira(
     return {"message": "Jira disconnected successfully"}
 
 
-# ---------- 7 GENERATE DOCUMENT ----------
+# ---------- 7️⃣ GENERATE DOCUMENT ----------
 @router.post("/generate-document")
 async def generate_document(
     project_key: str,
@@ -164,7 +166,7 @@ async def generate_document(
                 detail=f"No issues found in project '{project_key}'. Check project key."
             )
 
-        return await execute_workflow(
+        return await execute_jira_workflow(
             user_id=user["id"],
             project_id=project_key,
             data={"template": template, "jira_data": jira_structured},
