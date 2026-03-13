@@ -284,8 +284,5 @@ async def github_callback(request: Request):
     )
     issue_token(resp, safe_user)
     return resp
-```
 
-GitHub pe update karo aur Railway mein variable add karo:
-```
-NODE_ENV = production
+
