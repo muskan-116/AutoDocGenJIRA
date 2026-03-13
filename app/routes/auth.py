@@ -39,7 +39,6 @@ class RegisterPayload(BaseModel):
 # Helpers
 # -------------------------------
 def issue_token(response: Response, user: dict):
-    """Set JWT cookie for dev & production with proper SameSite and Secure."""
     token = jwt.encode(
         {
             "id": str(user["_id"]),
@@ -50,30 +49,30 @@ def issue_token(response: Response, user: dict):
         algorithm="HS256"
     )
 
-    # Detect environment
-    is_prod = os.getenv("NODE_ENV") == "production"
+    # ✅ Railway pe hamesha production treat karo
+    is_prod = os.getenv("NODE_ENV") == "production" or os.getenv("RAILWAY_ENVIRONMENT") is not None
 
     response.set_cookie(
         key="token",
         value=token,
         httponly=True,
-        secure=is_prod,                 # must be True in production HTTPS
-        samesite="none" if is_prod else "lax",
-        path="/"
+        secure=True,        # ✅ HTTPS pe hamesha True
+        samesite="none",    # ✅ cross-origin ke liye zaroori
+        path="/",
+        max_age=900         # ✅ 15 min
     )
 
     return token
 
 
-
 def serialize_user(user: dict) -> dict:
-    """Convert ObjectId and datetime to JSON-safe types"""
     user_copy = user.copy()
     if "_id" in user_copy and isinstance(user_copy["_id"], ObjectId):
         user_copy["_id"] = str(user_copy["_id"])
     if "createdAt" in user_copy and isinstance(user_copy["createdAt"], datetime):
         user_copy["createdAt"] = user_copy["createdAt"].isoformat()
     return user_copy
+
 
 # -------------------------------
 # Logout
@@ -85,11 +84,12 @@ async def logout(response: Response):
         key="token",
         path="/",
         httponly=True,
-        samesite="none" if os.getenv("NODE_ENV") == "production" else "lax",
-        secure=os.getenv("NODE_ENV") == "production"
+        samesite="none",
+        secure=True
     )
     return response
-    
+
+
 # -------------------------------
 # Signup
 # -------------------------------
@@ -113,10 +113,10 @@ async def signup(payload: RegisterPayload, request: Request):
     new_user.pop("passwordHash", None)
     safe_user = serialize_user(new_user)
 
-    # JSON response with cookie
     resp = JSONResponse({"message": "User registered successfully", "user": safe_user})
     issue_token(resp, safe_user)
     return resp
+
 
 # -------------------------------
 # Signin
@@ -135,11 +135,9 @@ async def signin(payload: LoginPayload, request: Request):
     user.pop("passwordHash", None)
     safe_user = serialize_user(user)
 
-    # JSON response with cookie
     resp = JSONResponse({"message": "Logged in successfully", "user": safe_user})
     issue_token(resp, safe_user)
     return resp
-
 
 
 # -------------------------------
@@ -286,3 +284,8 @@ async def github_callback(request: Request):
     )
     issue_token(resp, safe_user)
     return resp
+```
+
+GitHub pe update karo aur Railway mein variable add karo:
+```
+NODE_ENV = production
